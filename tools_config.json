@@ -1,0 +1,32 @@
+{
+    "System Monitoring": [
+        {
+            "name": "htop",
+            "command": "htop"
+        },
+        {
+            "name": "iotop",
+            "command": "iotop"
+        }
+    ],
+    "Network Tools": [
+        {
+            "name": "nmap",
+            "command": "nmap"
+        },
+        {
+            "name": "ping",
+            "command": "ping"
+        }
+    ],
+    "File Tools": [
+        {
+            "name": "rsync",
+            "command": "rsync"
+        },
+        {
+            "name": "scp",
+            "command": "scp"
+        }
+    ]
+}
