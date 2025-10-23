@@ -98,8 +98,8 @@
         },
         {
             "label": "Nmap",
-            "type": "terminal",
-            "command": "nmap",
+            "type": "method",
+            "method": "nmap_scan",
             "dependencies": ["nmap"]
         },
         {

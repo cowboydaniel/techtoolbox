@@ -184,6 +184,7 @@ qt_widgets.QApplication = type(
     {"instance": staticmethod(lambda: types.SimpleNamespace(quit=lambda: None))},
 )
 qt_widgets.QComboBox = DummyComboBox
+qt_widgets.QCheckBox = _BaseWidget
 qt_widgets.QDialog = _BaseWidget
 qt_widgets.QGridLayout = DummyLayout
 qt_widgets.QHBoxLayout = DummyLayout
