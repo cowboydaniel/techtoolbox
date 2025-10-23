@@ -556,12 +556,20 @@ class TechToolbox(QWidget):
                 self.show_warning("GNU ddrescue", "Please fill in source, destination, and log file paths.")
                 return
 
-            dest_path = Path(dest)
             try:
+                dest_path = Path(dest)
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 dest_path.touch(exist_ok=True)
             except Exception as exc:
                 self.show_error("GNU ddrescue", f"Failed to prepare destination file: {exc}")
+                return
+
+            try:
+                log_path = Path(log)
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                log_path.touch(exist_ok=True)
+            except Exception as exc:
+                self.show_error("GNU ddrescue", f"Failed to prepare log file: {exc}")
                 return
 
             command = " ".join(
