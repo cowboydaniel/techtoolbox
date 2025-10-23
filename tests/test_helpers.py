@@ -252,6 +252,28 @@ def test_build_terminal_command_no_terminal(monkeypatch):
         tech_toolbox.build_terminal_command("ls")
 
 
+def test_build_tool_entry_rejects_non_string_program_command():
+    toolbox = tech_toolbox.TechToolbox.__new__(tech_toolbox.TechToolbox)
+
+    with pytest.raises(ValueError, match="missing 'command' for program tool"):
+        toolbox._build_tool_entry({
+            "label": "Example",
+            "type": "program",
+            "command": True,
+        })
+
+
+def test_build_tool_entry_rejects_non_string_terminal_command():
+    toolbox = tech_toolbox.TechToolbox.__new__(tech_toolbox.TechToolbox)
+
+    with pytest.raises(ValueError, match="missing 'command' for terminal tool"):
+        toolbox._build_tool_entry({
+            "label": "Example",
+            "type": "terminal",
+            "command": False,
+        })
+
+
 def test_list_physical_disks_parses_lsblk(monkeypatch):
     sample_output = """
     sda 931G disk
