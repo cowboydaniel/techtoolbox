@@ -1,32 +1,154 @@
 {
-    "System Monitoring": [
+    "tools": [
         {
-            "name": "htop",
-            "command": "htop"
+            "label": "GParted",
+            "type": "program",
+            "command": "gparted",
+            "dependencies": ["gparted"]
         },
         {
-            "name": "iotop",
-            "command": "iotop"
-        }
-    ],
-    "Network Tools": [
-        {
-            "name": "nmap",
-            "command": "nmap"
+            "label": "GNOME Disks",
+            "type": "program",
+            "command": "gnome-disks",
+            "dependencies": ["gnome-disks"]
         },
         {
-            "name": "ping",
-            "command": "ping"
-        }
-    ],
-    "File Tools": [
-        {
-            "name": "rsync",
-            "command": "rsync"
+            "label": "GNU ddrescue",
+            "type": "method",
+            "method": "launch_ddrescue_gui",
+            "dependencies": ["ddrescue"]
         },
         {
-            "name": "scp",
-            "command": "scp"
+            "label": "Secure Wipe",
+            "type": "method",
+            "method": "secure_wipe",
+            "dependencies": ["lsblk", "shred", "badblocks", "pkexec"]
+        },
+        {
+            "label": "PhotoRec",
+            "type": "terminal",
+            "command": "sudo photorec",
+            "dependencies": ["photorec", "sudo"]
+        },
+        {
+            "label": "Clonezilla",
+            "type": "terminal",
+            "command": "sudo clonezilla",
+            "dependencies": ["clonezilla", "sudo"]
+        },
+        {
+            "label": "ADB Devices",
+            "type": "terminal",
+            "command": "adb devices",
+            "dependencies": ["adb"]
+        },
+        {
+            "label": "Scrcpy (Screen Mirror)",
+            "type": "program",
+            "command": "scrcpy",
+            "dependencies": ["scrcpy"]
+        },
+        {
+            "label": "Wireshark",
+            "type": "program",
+            "command": "wireshark",
+            "dependencies": ["wireshark"]
+        },
+        {
+            "label": "FileZilla",
+            "type": "program",
+            "command": "filezilla",
+            "dependencies": ["filezilla"]
+        },
+        {
+            "label": "BleachBit",
+            "type": "program",
+            "command": "bleachbit",
+            "dependencies": ["bleachbit"]
+        },
+        {
+            "label": "Stacer",
+            "type": "program",
+            "command": "stacer",
+            "dependencies": ["stacer"]
+        },
+        {
+            "label": "LibreOffice Writer",
+            "type": "program",
+            "command": "libreoffice --writer",
+            "dependencies": ["libreoffice"]
+        },
+        {
+            "label": "CherryTree Notes",
+            "type": "program",
+            "command": "cherrytree",
+            "dependencies": ["cherrytree"]
+        },
+        {
+            "label": "KeePassXC",
+            "type": "program",
+            "command": "keepassxc",
+            "dependencies": ["keepassxc"]
+        },
+        {
+            "label": "Simple Scan",
+            "type": "program",
+            "command": "simple-scan",
+            "dependencies": ["simple-scan"]
+        },
+        {
+            "label": "Nmap",
+            "type": "terminal",
+            "command": "nmap",
+            "dependencies": ["nmap"]
+        },
+        {
+            "label": "SMART Monitoring",
+            "type": "method",
+            "method": "smart_monitoring",
+            "dependencies": ["smartctl", "sudo"]
+        },
+        {
+            "label": "Benchmark Script",
+            "type": "method",
+            "method": "run_benchmark",
+            "dependencies": ["bash", "mpstat", "stress", "dd"]
+        },
+        {
+            "label": "Fan Speed",
+            "type": "method",
+            "method": "fan_speed",
+            "dependencies": ["tee", "sudo"]
+        },
+        {
+            "label": "Speedtest",
+            "type": "method",
+            "method": "run_speedtest",
+            "dependencies": ["speedtest-cli"]
+        },
+        {
+            "label": "Ping Test",
+            "type": "method",
+            "method": "ping_test",
+            "dependencies": ["ping"]
+        },
+        {
+            "label": "Restart Network",
+            "type": "method",
+            "method": "restart_network",
+            "dependencies": ["systemctl", "sudo"]
+        },
+        {
+            "label": "Reboot",
+            "type": "method",
+            "method": "reboot",
+            "dependencies": ["systemctl"]
+        },
+        {
+            "label": "Shutdown",
+            "type": "method",
+            "method": "shutdown",
+            "dependencies": ["systemctl"]
         }
     ]
 }

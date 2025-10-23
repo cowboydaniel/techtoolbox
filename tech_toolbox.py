@@ -1,4 +1,5 @@
 import glob
+import json
 import os
 import re
 import shlex
@@ -194,33 +195,23 @@ def get_sensors_data():
     return sensor_data
 
 
-DEPENDENCY_MAP = {
-    "GParted": ["gparted"],
-    "GNOME Disks": ["gnome-disks"],
-    "GNU ddrescue": ["ddrescue"],
-    "Secure Wipe": ["lsblk", "shred", "badblocks", "pkexec"],
-    "PhotoRec": ["photorec", "sudo"],
-    "Clonezilla": ["clonezilla", "sudo"],
-    "ADB Devices": ["adb"],
-    "Scrcpy (Screen Mirror)": ["scrcpy"],
-    "Wireshark": ["wireshark"],
-    "FileZilla": ["filezilla"],
-    "BleachBit": ["bleachbit"],
-    "Stacer": ["stacer"],
-    "LibreOffice Writer": ["libreoffice"],
-    "CherryTree Notes": ["cherrytree"],
-    "KeePassXC": ["keepassxc"],
-    "Simple Scan": ["simple-scan"],
-    "Nmap": ["nmap"],
-    "SMART Monitoring": ["smartctl", "sudo"],
-    "Benchmark Script": ["bash", "mpstat", "stress", "dd"],
-    "Fan Speed": ["tee", "sudo"],
-    "Speedtest": ["speedtest-cli"],
-    "Ping Test": ["ping"],
-    "Restart Network": ["systemctl", "sudo"],
-    "Reboot": ["systemctl"],
-    "Shutdown": ["systemctl"],
-}
+def load_tools_config(config_path: Path | None = None) -> list[dict]:
+    if config_path is None:
+        config_path = Path(APP_DIR) / "tools_config.json"
+
+    try:
+        with config_path.open("r", encoding="utf-8") as handle:
+            config = json.load(handle)
+    except FileNotFoundError as exc:
+        raise ValueError(f"Tools configuration file not found: {config_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in tools configuration: {exc}") from exc
+
+    tools = config.get("tools") if isinstance(config, dict) else None
+    if not isinstance(tools, list):
+        raise ValueError("tools_config.json must contain a top-level 'tools' list")
+
+    return tools
 
 
 class TechToolbox(QWidget):
@@ -271,47 +262,8 @@ class TechToolbox(QWidget):
         button_grid.setVerticalSpacing(6)
         layout.addLayout(button_grid)
 
-        tool_commands = {
-            "GParted": lambda: self.run_program("gparted"),
-            "GNOME Disks": lambda: self.run_program("gnome-disks"),
-            "GNU ddrescue": self.launch_ddrescue_gui,
-            "Secure Wipe": self.secure_wipe,
-            "PhotoRec": self.terminal_launcher("sudo photorec"),
-            "Clonezilla": self.terminal_launcher("sudo clonezilla"),
-            "ADB Devices": self.terminal_launcher("adb devices"),
-            "Scrcpy (Screen Mirror)": lambda: self.run_program("scrcpy"),
-            "Wireshark": lambda: self.run_program("wireshark"),
-            "FileZilla": lambda: self.run_program("filezilla"),
-            "BleachBit": lambda: self.run_program("bleachbit"),
-            "Stacer": lambda: self.run_program("stacer"),
-            "LibreOffice Writer": lambda: self.run_program("libreoffice --writer"),
-            "CherryTree Notes": lambda: self.run_program("cherrytree"),
-            "KeePassXC": lambda: self.run_program("keepassxc"),
-            "Simple Scan": lambda: self.run_program("simple-scan"),
-            "Nmap": self.terminal_launcher("nmap"),
-            "SMART Monitoring": self.smart_monitoring,
-        }
-
-        special_tools = {
-            "Benchmark Script": self.run_benchmark,
-            "Fan Speed": self.fan_speed,
-            "Speedtest": self.run_speedtest,
-            "Ping Test": self.ping_test,
-            "Restart Network": self.restart_network,
-            "Reboot": self.reboot,
-            "Shutdown": self.shutdown,
-        }
-
-        all_tools = {**tool_commands, **special_tools}
-        max_rows = 13
-        for index, (label_text, action) in enumerate(all_tools.items()):
-            button = QPushButton(label_text)
-            button.setFont(self.button_font)
-            button.setMinimumWidth(220)
-            button.clicked.connect(action)
-            row = index % max_rows
-            col = index // max_rows
-            button_grid.addWidget(button, row, col)
+        self.tool_entries = self._prepare_tool_entries()
+        self._create_tool_buttons(button_grid, self.tool_entries)
 
         quit_button = QPushButton("Quit")
         quit_button.setObjectName("dangerButton")
@@ -340,6 +292,83 @@ class TechToolbox(QWidget):
 
         button_font = QFont("Arial", 10)
         self.button_font = button_font
+
+    def _prepare_tool_entries(self) -> list[dict]:
+        try:
+            tool_definitions = load_tools_config()
+        except ValueError as exc:
+            self.show_error("Configuration Error", str(exc))
+            return []
+
+        entries: list[dict] = []
+        problems: list[str] = []
+
+        for tool in tool_definitions:
+            try:
+                entries.append(self._build_tool_entry(tool))
+            except ValueError as exc:
+                label = tool.get("label", "<unnamed>")
+                problems.append(f"{label}: {exc}")
+
+        if problems:
+            self.show_warning(
+                "Configuration Issues",
+                "Some tools were skipped due to configuration errors:\n" + "\n".join(problems),
+            )
+
+        return entries
+
+    def _build_tool_entry(self, tool: dict) -> dict:
+        label = tool.get("label")
+        if not label:
+            raise ValueError("missing 'label'")
+
+        dependencies = tool.get("dependencies", [])
+        if dependencies is None:
+            dependencies = []
+
+        tool_type = tool.get("type", "program")
+
+        if tool_type == "program":
+            command = tool.get("command")
+            if not command:
+                raise ValueError("missing 'command' for program tool")
+            action = lambda cmd=command: self.run_program(cmd)
+        elif tool_type == "terminal":
+            command = tool.get("command")
+            if not command:
+                raise ValueError("missing 'command' for terminal tool")
+            hold_open = bool(tool.get("hold_open", True))
+            action = self.terminal_launcher(command, hold_open=hold_open)
+        elif tool_type == "method":
+            method_name = tool.get("method")
+            if not method_name:
+                raise ValueError("missing 'method' for method tool")
+            method = getattr(self, method_name, None)
+            if method is None or not callable(method):
+                raise ValueError(f"unknown method '{method_name}'")
+            action = method
+        else:
+            raise ValueError(f"unknown tool type '{tool_type}'")
+
+        return {"label": label, "action": action, "dependencies": list(dependencies)}
+
+    def _create_tool_buttons(self, button_grid: QGridLayout, entries: list[dict]) -> None:
+        max_rows = 13
+        for index, entry in enumerate(entries):
+            button = QPushButton(entry["label"])
+            button.setFont(self.button_font)
+            button.setMinimumWidth(220)
+            button.clicked.connect(entry["action"])
+            row = index % max_rows
+            col = index // max_rows
+            button_grid.addWidget(button, row, col)
+
+    def _get_tool_dependencies(self, label: str) -> list[str]:
+        for entry in getattr(self, "tool_entries", []):
+            if entry.get("label") == label:
+                return entry.get("dependencies", [])
+        return []
 
     def show_error(self, title: str, message: str) -> None:
         QMessageBox.critical(self, title, message)
@@ -377,17 +406,19 @@ class TechToolbox(QWidget):
         return True
 
     def check_dependencies(self) -> None:
-        missing = []
+        missing: list[str] = []
 
-        for label, executables in DEPENDENCY_MAP.items():
-            unavailable = [exe for exe in executables if not shutil.which(exe)]
+        for entry in getattr(self, "tool_entries", []):
+            dependencies = entry.get("dependencies", [])
+            unavailable = [exe for exe in dependencies if not shutil.which(exe)]
             if unavailable:
-                missing.append(f"{label} ({', '.join(unavailable)})")
+                missing.append(f"{entry['label']} ({', '.join(unavailable)})")
 
         if missing:
             self.show_warning(
                 "Missing Tools",
-                "Some tools are unavailable because their executables were not found:\n" + "\n".join(missing),
+                "Some tools are unavailable because their executables were not found:\n"
+                + "\n".join(missing),
             )
 
     def update_system_stats(self) -> None:
@@ -440,7 +471,7 @@ class TechToolbox(QWidget):
             self.show_error("Benchmark", "benchmark.sh was not found in the application directory.")
             return
 
-        dependencies = DEPENDENCY_MAP.get("Benchmark Script", [])
+        dependencies = self._get_tool_dependencies("Benchmark Script")
         if dependencies and not self.ensure_commands_available(*dependencies):
             return
 
@@ -553,7 +584,8 @@ class TechToolbox(QWidget):
         dialog.exec()
 
     def smart_monitoring(self) -> None:
-        if not self.ensure_commands_available("smartctl", "sudo"):
+        dependencies = self._get_tool_dependencies("SMART Monitoring")
+        if dependencies and not self.ensure_commands_available(*dependencies):
             return
 
         dialog = QDialog(self)
@@ -619,7 +651,8 @@ class TechToolbox(QWidget):
         self.run_terminal_task("ping -c 4 8.8.8.8")
 
     def reboot(self) -> None:
-        if not self.ensure_commands_available("systemctl"):
+        dependencies = self._get_tool_dependencies("Reboot")
+        if dependencies and not self.ensure_commands_available(*dependencies):
             return
         response = QMessageBox.question(self, "Reboot", "Are you sure you want to reboot?")
         if response == QMessageBox.StandardButton.Yes:
@@ -629,7 +662,8 @@ class TechToolbox(QWidget):
                 self.show_error("Reboot", f"Failed to initiate reboot: {exc}")
 
     def shutdown(self) -> None:
-        if not self.ensure_commands_available("systemctl"):
+        dependencies = self._get_tool_dependencies("Shutdown")
+        if dependencies and not self.ensure_commands_available(*dependencies):
             return
         response = QMessageBox.question(self, "Shutdown", "Are you sure you want to shut down?")
         if response == QMessageBox.StandardButton.Yes:
@@ -639,12 +673,14 @@ class TechToolbox(QWidget):
                 self.show_error("Shutdown", f"Failed to initiate shutdown: {exc}")
 
     def restart_network(self) -> None:
-        if not self.ensure_commands_available("systemctl", "sudo"):
+        dependencies = self._get_tool_dependencies("Restart Network")
+        if dependencies and not self.ensure_commands_available(*dependencies):
             return
         self.run_terminal_task("sudo systemctl restart NetworkManager")
 
     def secure_wipe(self) -> None:
-        if not self.ensure_commands_available("lsblk", "shred", "badblocks", "pkexec"):
+        dependencies = self._get_tool_dependencies("Secure Wipe")
+        if dependencies and not self.ensure_commands_available(*dependencies):
             return
 
         dialog = QDialog(self)

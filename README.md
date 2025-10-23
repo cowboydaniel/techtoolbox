@@ -31,6 +31,8 @@ python3 tech_toolbox.py
 
 Grant the application permission to run privileged commands when prompted (several utilities launch through `sudo` or `pkexec`).
 
+The launcher grid is defined in [`tools_config.json`](tools_config.json). Each entry specifies the button label, how the tool is invoked, and which external executables it depends on. Updating this file lets you add or remove launchers without touching the Python code.
+
 The project previously included `linux/` and `windows/` wrappers that re-imported the top-level script; these are no longer required—`tech_toolbox.py` is the single entry point across platforms.
 
 ## Notes
@@ -39,3 +41,12 @@ The project previously included `linux/` and `windows/` wrappers that re-importe
 - Fan speed adjustments rely on writable `/sys/class/hwmon/*/pwm*` interfaces and prompt via `sudo tee`.
 - External IP lookups use `requests` to call [api.ipify.org](https://api.ipify.org).
 - The launchers report missing executables at startup so you can install anything that is absent from `$PATH`.
+
+## Testing
+
+Install the optional test dependency and run the suite with `pytest`:
+
+```bash
+pip install pytest
+pytest
+```
