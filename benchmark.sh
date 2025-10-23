@@ -1,4 +1,8 @@
 #!/bin/bash
+set -euo pipefail
+
+TMPFILE=$(mktemp --tmpdir techtoolbox.XXXXXX)
+trap 'rm -f "$TMPFILE"' EXIT
 
 # Benchmark CPU
 echo "Running CPU Benchmark..."
@@ -24,11 +28,7 @@ echo "Disk Usage (before benchmark):"
 df -h
 
 echo "Starting Disk Write Benchmark..."
-dd if=/dev/zero of=testfile bs=1M count=1024 conv=fdatasync
+dd if=/dev/zero of="$TMPFILE" bs=1M count=1024 conv=fdatasync
 echo "Disk Write Benchmark Complete."
 
-# Remove test file after disk benchmark
-rm testfile
-
 echo "Benchmarking Complete."
-
