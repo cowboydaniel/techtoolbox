@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import glob
 import shlex
+import threading
 from pathlib import Path
 
 
@@ -62,7 +63,13 @@ def get_internal_ip():
     return "Unavailable"
 
 
-def get_external_ip():
+EXTERNAL_IP_CACHE_TTL = 300  # seconds
+_external_ip_cache = {"value": "Checking...", "expires": 0.0}
+_external_ip_lock = threading.Lock()
+_external_ip_refreshing = False
+
+
+def _fetch_external_ip():
     try:
         response = requests.get("https://api.ipify.org", timeout=2)
         response.raise_for_status()
@@ -71,12 +78,83 @@ def get_external_ip():
         return "Unavailable"
 
 
+def _refresh_external_ip_cache():
+    global _external_ip_refreshing
+
+    value = _fetch_external_ip()
+    ttl = EXTERNAL_IP_CACHE_TTL if value != "Unavailable" else 60
+
+    with _external_ip_lock:
+        _external_ip_cache["value"] = value
+        _external_ip_cache["expires"] = time.time() + ttl
+        _external_ip_refreshing = False
+
+
+def get_external_ip():
+    """Return the cached external IP, refreshing it in the background when stale."""
+
+    global _external_ip_refreshing
+
+    now = time.time()
+    with _external_ip_lock:
+        value = _external_ip_cache["value"]
+        needs_refresh = now >= _external_ip_cache["expires"] and not _external_ip_refreshing
+        if needs_refresh:
+            _external_ip_refreshing = True
+            threading.Thread(target=_refresh_external_ip_cache, daemon=True).start()
+
+    return value
+
+
 def detect_pwm_paths():
     pwm_paths = []
     for path in glob.glob("/sys/class/hwmon/hwmon*/pwm*"):
         if os.path.isfile(path):
             pwm_paths.append(path)
     return sorted(pwm_paths)
+
+
+def list_physical_disks():
+    disks = []
+
+    try:
+        output = subprocess.check_output(
+            ["lsblk", "-dn", "-o", "NAME,SIZE,TYPE"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        output = ""
+
+    if output:
+        for line in output.splitlines():
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+
+            name, size, dev_type = parts[:3]
+            if dev_type != "disk":
+                continue
+
+            disks.append({
+                "path": f"/dev/{name}",
+                "display": f"/dev/{name} ({size})" if size else f"/dev/{name}",
+            })
+
+    if disks:
+        return disks
+
+    block_root = Path("/sys/block")
+    if not block_root.exists():
+        return disks
+
+    for entry in sorted(block_root.iterdir()):
+        name = entry.name
+        if name.startswith(("loop", "ram", "fd", "sr", "zram", "dm-")):
+            continue
+        disks.append({"path": f"/dev/{name}", "display": f"/dev/{name}"})
+
+    return disks
 
 
 def run_program(command: str):
@@ -103,6 +181,18 @@ def program_launcher(command: str):
 
 def terminal_launcher(command: str, hold_open: bool = True):
     return lambda command=command, hold_open=hold_open: run_terminal_task(command, hold_open=hold_open)
+
+
+def ensure_commands_available(*commands: str) -> bool:
+    missing = [command for command in commands if not shutil.which(command)]
+    if missing:
+        messagebox.showerror(
+            "Missing Tools",
+            "The following required command(s) were not found: " + ", ".join(missing),
+        )
+        return False
+    return True
+
 
 def check_dependencies():
     missing = []
@@ -329,6 +419,91 @@ def launch_ddrescue_gui():
         font=("Arial", 12),
     ).pack(pady=20)
 
+
+def smart_monitoring():
+    if not ensure_commands_available("smartctl", "sudo"):
+        return
+
+    window = tk.Toplevel(root)
+    window.title("SMART Monitoring")
+    window.geometry("420x260")
+    window.config(bg="#2e3b4e")
+
+    tk.Label(
+        window,
+        text="Select a drive to inspect with smartctl -a.",
+        bg="#2e3b4e",
+        fg="white",
+    ).pack(pady=(10, 5))
+
+    device_map = {}
+    selected_display = tk.StringVar()
+    device_dropdown = ttk.Combobox(window, textvariable=selected_display, state="readonly", width=38)
+    device_dropdown.pack(pady=5)
+
+    def refresh_devices():
+        device_map.clear()
+        devices = list_physical_disks()
+        for item in devices:
+            device_map[item["display"]] = item["path"]
+
+        options = list(device_map.keys())
+        device_dropdown.configure(values=options)
+
+        if options:
+            selected_display.set(options[0])
+            device_dropdown.configure(state="readonly")
+        else:
+            selected_display.set("")
+            device_dropdown.set("")
+            device_dropdown.configure(state="disabled")
+
+    refresh_devices()
+
+    tk.Button(
+        window,
+        text="Refresh",
+        command=refresh_devices,
+        bg="#1c2833",
+        fg="white",
+    ).pack(pady=(0, 10))
+
+    tk.Label(
+        window,
+        text="Or enter a device path manually (e.g., /dev/nvme0n1):",
+        bg="#2e3b4e",
+        fg="white",
+    ).pack()
+
+    manual_entry = tk.Entry(window, width=40)
+    manual_entry.pack(pady=5)
+
+    def run_smartctl():
+        manual_value = manual_entry.get().strip()
+        if manual_value:
+            target = manual_value
+        else:
+            target = device_map.get(selected_display.get(), "").strip()
+
+        if not target:
+            messagebox.showwarning(
+                "SMART Monitoring",
+                "Select a detected device or enter a device path to inspect.",
+            )
+            return
+
+        window.destroy()
+        run_terminal_task(f"sudo smartctl -a {shlex.quote(target)}")
+
+    tk.Button(
+        window,
+        text="Run smartctl",
+        command=run_smartctl,
+        bg="#4CAF50",
+        fg="white",
+        font=("Arial", 12),
+    ).pack(pady=10)
+
 def run_speedtest():
     run_terminal_task("speedtest-cli")
 
@@ -338,16 +513,28 @@ def ping_test():
 
 
 def reboot():
+    if not ensure_commands_available("systemctl"):
+        return
     if messagebox.askyesno("Reboot", "Are you sure you want to reboot?"):
-        os.system("systemctl reboot")
+        try:
+            subprocess.Popen(["systemctl", "reboot"])
+        except Exception as exc:
+            messagebox.showerror("Reboot", f"Failed to initiate reboot: {exc}")
 
 
 def shutdown():
+    if not ensure_commands_available("systemctl"):
+        return
     if messagebox.askyesno("Shutdown", "Are you sure you want to shut down?"):
-        os.system("systemctl poweroff")
+        try:
+            subprocess.Popen(["systemctl", "poweroff"])
+        except Exception as exc:
+            messagebox.showerror("Shutdown", f"Failed to initiate shutdown: {exc}")
 
 
 def restart_network():
+    if not ensure_commands_available("systemctl", "sudo"):
+        return
     run_terminal_task("sudo systemctl restart NetworkManager")
 
 
@@ -549,7 +736,7 @@ tool_commands = {
     "KeePassXC": program_launcher("keepassxc"),
     "Simple Scan": program_launcher("simple-scan"),
     "Nmap": terminal_launcher("nmap"),
-    "SMART Monitoring": terminal_launcher("sudo smartctl -a /dev/sda"),
+    "SMART Monitoring": smart_monitoring,
 }
 
 special_tools = {
