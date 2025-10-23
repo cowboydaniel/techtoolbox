@@ -729,7 +729,7 @@ class TechToolbox(QWidget):
 
             drives_found = []
             for line in output.splitlines()[1:]:
-                parts = line.split()
+                parts = line.split(None, 3)
                 if len(parts) < 3:
                     continue
 
