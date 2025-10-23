@@ -1,21 +1,35 @@
-import tkinter as tk
-from tkinter import messagebox, ttk
-import psutil
-import subprocess
-import socket
-import os
-import time
-import requests
-import shutil
-import tempfile
 import glob
+import os
 import shlex
+import shutil
+import socket
+import subprocess
+import tempfile
 import threading
+import time
 from pathlib import Path
 
+import psutil
+import requests
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QMessageBox,
+    QPushButton,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-
 
 TERMINAL_CANDIDATES = (
     ("gnome-terminal", ["--", "bash", "-lc"]),
@@ -29,6 +43,11 @@ TERMINAL_CANDIDATES = (
     ("alacritty", ["-e", "bash", "-lc"]),
     ("kitty", ["-e", "bash", "-lc"]),
 )
+
+EXTERNAL_IP_CACHE_TTL = 300  # seconds
+_external_ip_cache = {"value": "Checking...", "expires": 0.0}
+_external_ip_lock = threading.Lock()
+_external_ip_refreshing = False
 
 
 def build_terminal_command(command: str, hold_open: bool = False):
@@ -61,12 +80,6 @@ def get_internal_ip():
     except Exception:
         pass
     return "Unavailable"
-
-
-EXTERNAL_IP_CACHE_TTL = 300  # seconds
-_external_ip_cache = {"value": "Checking...", "expires": 0.0}
-_external_ip_lock = threading.Lock()
-_external_ip_refreshing = False
 
 
 def _fetch_external_ip():
@@ -157,102 +170,6 @@ def list_physical_disks():
     return disks
 
 
-def run_program(command: str):
-    try:
-        subprocess.Popen(shlex.split(command))
-    except FileNotFoundError:
-        messagebox.showerror("Error", f"Command not found: {command.split()[0]}")
-    except Exception as exc:
-        messagebox.showerror("Error", f"Failed to launch command: {exc}")
-
-
-def run_terminal_task(command: str, hold_open: bool = True):
-    try:
-        open_terminal(command, hold_open=hold_open)
-    except FileNotFoundError as exc:
-        messagebox.showerror("Terminal Error", str(exc))
-    except Exception as exc:
-        messagebox.showerror("Terminal Error", f"Failed to open terminal: {exc}")
-
-
-def program_launcher(command: str):
-    return lambda command=command: run_program(command)
-
-
-def terminal_launcher(command: str, hold_open: bool = True):
-    return lambda command=command, hold_open=hold_open: run_terminal_task(command, hold_open=hold_open)
-
-
-def ensure_commands_available(*commands: str) -> bool:
-    missing = [command for command in commands if not shutil.which(command)]
-    if missing:
-        messagebox.showerror(
-            "Missing Tools",
-            "The following required command(s) were not found: " + ", ".join(missing),
-        )
-        return False
-    return True
-
-
-def check_dependencies():
-    missing = []
-
-    for label, executables in DEPENDENCY_MAP.items():
-        unavailable = [exe for exe in executables if not shutil.which(exe)]
-        if unavailable:
-            missing.append(f"{label} ({', '.join(unavailable)})")
-
-    if missing:
-        messagebox.showwarning(
-            "Missing Tools",
-            "Some tools are unavailable because their executables were not found:\n" + "\n".join(missing),
-        )
-
-def update_system_stats():
-    cpu_usage = psutil.cpu_percent(interval=0.1)
-    memory = psutil.virtual_memory()
-    swap = psutil.swap_memory()
-    disk = psutil.disk_usage('/')
-
-    uptime_seconds = time.time() - psutil.boot_time()
-    uptime_str = time.strftime('%H:%M:%S', time.gmtime(uptime_seconds))
-
-    internal_ip = get_internal_ip()
-    external_ip = get_external_ip()
-
-    try:
-        temps = psutil.sensors_temperatures()
-    except (AttributeError, psutil.Error):
-        temps = {}
-
-    if temps:
-        coretemp = temps.get("coretemp") or next((values for name, values in temps.items() if values), None)
-        if coretemp:
-            temp_label.config(text=f"CPU Temp: {coretemp[0].current:.1f}°C")
-        else:
-            temp_label.config(text="CPU Temp: N/A")
-    else:
-        temp_label.config(text="CPU Temp: Unavailable")
-
-    cpu_label.config(text=f"CPU Usage: {cpu_usage}%")
-    memory_label.config(text=f"Memory: {memory.percent}%")
-    swap_label.config(text=f"Swap: {swap.percent}%")
-    disk_label.config(text=f"Disk: {disk.percent}% ({disk.used // (1024**3)}GB / {disk.total // (1024**3)}GB)")
-    uptime_label.config(text=f"Uptime: {uptime_str}")
-    internal_ip_label.config(text=f"Internal IP: {internal_ip}")
-    external_ip_label.config(text=f"External IP: {external_ip}")
-    
-    # Update fan speed
-    sensor_data = get_sensors_data()
-    fan_speeds = sensor_data.get("Fan_Speed", {})
-    if fan_speeds:
-        label, value = next(iter(fan_speeds.items()))
-        fan_speed_label.config(text=f"{label}: {value}")
-    else:
-        fan_speed_label.config(text="Fan Speed: N/A")
-
-    root.after(1000, update_system_stats)  # Update every second
-
 def get_sensors_data():
     sensor_data = {"Fan_Speed": {}}
 
@@ -275,479 +192,6 @@ def get_sensors_data():
 
     return sensor_data
 
-def run_benchmark():
-    script_path = os.path.join(APP_DIR, "benchmark.sh")
-    if not os.path.exists(script_path):
-        messagebox.showerror("Benchmark", "benchmark.sh was not found in the application directory.")
-        return
-
-    run_terminal_task(f"bash {shlex.quote(script_path)}")
-
-
-def set_fan_speed(speed_value: int, pwm_path: str):
-    try:
-        value = int(speed_value)
-    except (TypeError, ValueError):
-        messagebox.showerror("Fan Speed", "Invalid speed value provided.")
-        return
-
-    value = max(0, min(255, value))
-    command = f"echo {value} | sudo tee {shlex.quote(pwm_path)}"
-    run_terminal_task(command)
-
-
-def fan_speed():
-    pwm_paths = detect_pwm_paths()
-    if not pwm_paths:
-        messagebox.showwarning(
-            "Fan Speed",
-            "No writable PWM devices were detected. Ensure fan control is supported on this system.",
-        )
-        return
-
-    fan_speed_window = tk.Toplevel(root)
-    fan_speed_window.title("Fan Speed Control")
-    fan_speed_window.geometry("420x240")
-    fan_speed_window.config(bg="#2e3b4e")
-
-    tk.Label(
-        fan_speed_window,
-        text="Adjust Fan Speed:",
-        bg="#2e3b4e",
-        fg="white",
-        font=("Arial", 14),
-    ).pack(pady=10)
-
-    speed_slider = tk.Scale(
-        fan_speed_window,
-        from_=0,
-        to=255,
-        orient="horizontal",
-        bg="#2e3b4e",
-        fg="white",
-        font=("Arial", 12),
-    )
-    speed_slider.set(128)
-    speed_slider.pack(pady=10)
-
-    tk.Label(
-        fan_speed_window,
-        text="PWM Device:",
-        bg="#2e3b4e",
-        fg="white",
-        font=("Arial", 12),
-    ).pack(pady=(10, 0))
-
-    selected_pwm = tk.StringVar(value=pwm_paths[0])
-    pwm_dropdown = ttk.Combobox(fan_speed_window, textvariable=selected_pwm, values=pwm_paths, state="readonly")
-    pwm_dropdown.pack(pady=5, fill="x", padx=20)
-
-    tk.Label(
-        fan_speed_window,
-        text="A terminal will open and prompt for sudo privileges when applying the new speed.",
-        bg="#2e3b4e",
-        fg="white",
-        wraplength=360,
-    ).pack(pady=5)
-
-    def apply_speed():
-        set_fan_speed(speed_slider.get(), selected_pwm.get())
-
-    tk.Button(
-        fan_speed_window,
-        text="Set Fan Speed",
-        command=apply_speed,
-        bg="#1c2833",
-        fg="white",
-        font=("Arial", 12),
-    ).pack(pady=10)
-
-
-def launch_ddrescue_gui():
-    window = tk.Toplevel(root)
-    window.title("GNU ddrescue")
-    window.geometry("420x320")
-
-    tk.Label(window, text="Source device (e.g., /dev/sdb):").pack(pady=5)
-    src_entry = tk.Entry(window, width=40)
-    src_entry.pack()
-
-    tk.Label(window, text="Destination image (e.g., /path/recovery.img):").pack(pady=5)
-    dest_entry = tk.Entry(window, width=40)
-    dest_entry.pack()
-
-    tk.Label(window, text="Log file (e.g., /path/recovery.log):").pack(pady=5)
-    log_entry = tk.Entry(window, width=40)
-    log_entry.pack()
-
-    def run_ddrescue_command():
-        src = src_entry.get().strip()
-        dest = dest_entry.get().strip()
-        log = log_entry.get().strip()
-
-        if not (src and dest and log):
-            messagebox.showwarning("GNU ddrescue", "Please fill in source, destination, and log file paths.")
-            return
-
-        dest_path = Path(dest)
-        try:
-            dest_path.parent.mkdir(parents=True, exist_ok=True)
-            dest_path.touch(exist_ok=True)
-        except Exception as exc:
-            messagebox.showerror("GNU ddrescue", f"Failed to prepare destination file: {exc}")
-            return
-
-        command = " ".join(
-            [
-                "sudo",
-                "ddrescue",
-                shlex.quote(src),
-                shlex.quote(dest),
-                shlex.quote(log),
-            ]
-        )
-
-        run_terminal_task(command)
-        window.destroy()
-
-    tk.Button(
-        window,
-        text="Start",
-        command=run_ddrescue_command,
-        bg="#4CAF50",
-        fg="white",
-        font=("Arial", 12),
-    ).pack(pady=20)
-
-
-def smart_monitoring():
-    if not ensure_commands_available("smartctl", "sudo"):
-        return
-
-    window = tk.Toplevel(root)
-    window.title("SMART Monitoring")
-    window.geometry("420x260")
-    window.config(bg="#2e3b4e")
-
-    tk.Label(
-        window,
-        text="Select a drive to inspect with smartctl -a.",
-        bg="#2e3b4e",
-        fg="white",
-    ).pack(pady=(10, 5))
-
-    device_map = {}
-    selected_display = tk.StringVar()
-    device_dropdown = ttk.Combobox(window, textvariable=selected_display, state="readonly", width=38)
-    device_dropdown.pack(pady=5)
-
-    def refresh_devices():
-        device_map.clear()
-        devices = list_physical_disks()
-        for item in devices:
-            device_map[item["display"]] = item["path"]
-
-        options = list(device_map.keys())
-        device_dropdown.configure(values=options)
-
-        if options:
-            selected_display.set(options[0])
-            device_dropdown.configure(state="readonly")
-        else:
-            selected_display.set("")
-            device_dropdown.set("")
-            device_dropdown.configure(state="disabled")
-
-    refresh_devices()
-
-    tk.Button(
-        window,
-        text="Refresh",
-        command=refresh_devices,
-        bg="#1c2833",
-        fg="white",
-    ).pack(pady=(0, 10))
-
-    tk.Label(
-        window,
-        text="Or enter a device path manually (e.g., /dev/nvme0n1):",
-        bg="#2e3b4e",
-        fg="white",
-    ).pack()
-
-    manual_entry = tk.Entry(window, width=40)
-    manual_entry.pack(pady=5)
-
-    def run_smartctl():
-        manual_value = manual_entry.get().strip()
-        if manual_value:
-            target = manual_value
-        else:
-            target = device_map.get(selected_display.get(), "").strip()
-
-        if not target:
-            messagebox.showwarning(
-                "SMART Monitoring",
-                "Select a detected device or enter a device path to inspect.",
-            )
-            return
-
-        window.destroy()
-        run_terminal_task(f"sudo smartctl -a {shlex.quote(target)}")
-
-    tk.Button(
-        window,
-        text="Run smartctl",
-        command=run_smartctl,
-        bg="#4CAF50",
-        fg="white",
-        font=("Arial", 12),
-    ).pack(pady=10)
-
-def run_speedtest():
-    run_terminal_task("speedtest-cli")
-
-
-def ping_test():
-    run_terminal_task("ping -c 4 8.8.8.8")
-
-
-def reboot():
-    if not ensure_commands_available("systemctl"):
-        return
-    if messagebox.askyesno("Reboot", "Are you sure you want to reboot?"):
-        try:
-            subprocess.Popen(["systemctl", "reboot"])
-        except Exception as exc:
-            messagebox.showerror("Reboot", f"Failed to initiate reboot: {exc}")
-
-
-def shutdown():
-    if not ensure_commands_available("systemctl"):
-        return
-    if messagebox.askyesno("Shutdown", "Are you sure you want to shut down?"):
-        try:
-            subprocess.Popen(["systemctl", "poweroff"])
-        except Exception as exc:
-            messagebox.showerror("Shutdown", f"Failed to initiate shutdown: {exc}")
-
-
-def restart_network():
-    if not ensure_commands_available("systemctl", "sudo"):
-        return
-    run_terminal_task("sudo systemctl restart NetworkManager")
-
-
-def secure_wipe():
-    """Securely wipe a selected drive using multiple overwrite passes."""
-
-    def get_drives():
-        try:
-            output = subprocess.check_output(
-                ["lsblk", "-d", "-o", "NAME,SIZE,TYPE,MOUNTPOINT"],
-                text=True,
-            )
-        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-            messagebox.showerror("Secure Wipe", f"Failed to list block devices: {exc}")
-            return []
-
-        drives_found = []
-        for line in output.splitlines()[1:]:
-            parts = line.split()
-            if len(parts) < 3:
-                continue
-
-            name, size, dev_type = parts[:3]
-            if dev_type in {"rom", "loop", "part"}:
-                continue
-
-            mountpoint = parts[3] if len(parts) >= 4 else ""
-            display = f"{name} ({size})"
-            if mountpoint and mountpoint != "-":
-                display += f" – mounted at {mountpoint}"
-
-            drives_found.append({"path": f"/dev/{name}", "display": display})
-
-        return drives_found
-
-    def get_selected_drive():
-        selection = drive_list.curselection()
-        if not selection:
-            return None
-        return drives[selection[0]]
-
-    def refresh_drives():
-        nonlocal drives
-        drives = get_drives()
-        drive_list.delete(0, tk.END)
-        for drive in drives:
-            drive_list.insert(tk.END, drive["display"])
-        selected_label.config(text="No drive selected")
-
-    def create_wipe_script(device_path: str) -> str:
-        temp_dir = tempfile.mkdtemp(prefix="wipe_")
-        script_path = os.path.join(temp_dir, "wipe.sh")
-
-        script_content = f"""#!/bin/bash
-set -euo pipefail
-
-TEMP_DIR={shlex.quote(temp_dir)}
-trap 'rm -rf -- "$TEMP_DIR"' EXIT
-device={shlex.quote(device_path)}
-
-log_step() {{
-    echo ""
-    echo "==> $1"
-}}
-
-log_step "Pass 1: writing 0xFF pattern"
-shred -v -n 0 --force --pattern=ff "$device"
-
-log_step "Pass 2: writing zeros"
-shred -v -n 0 --force --zero "$device"
-
-log_step "Pass 3: writing random data"
-shred -v -n 1 --force "$device"
-
-log_step "Verification: read-only badblocks scan"
-badblocks -sv "$device"
-
-echo ""
-echo "Secure wipe completed for $device"
-"""
-
-        with open(script_path, "w", encoding="utf-8") as script_file:
-            script_file.write(script_content)
-
-        os.chmod(script_path, 0o755)
-        return script_path
-
-    def on_wipe():
-        selected_drive = get_selected_drive()
-        if not selected_drive:
-            messagebox.showwarning("Secure Wipe", "Please select a drive to wipe.")
-            return
-
-        confirm_message = (
-            f"Are you sure you want to wipe {selected_drive['display']}?\n\n"
-            "This process will:\n"
-            "• Pass 1: write 0xFF pattern\n"
-            "• Pass 2: write zeros\n"
-            "• Pass 3: write random data\n"
-            "• Verify with a read-only badblocks scan\n\n"
-            "All data on the device will be permanently destroyed."
-        )
-
-        if not messagebox.askyesno("Confirm Secure Wipe", confirm_message):
-            return
-
-        script_path = create_wipe_script(selected_drive["path"])
-        run_terminal_task(f"pkexec bash {shlex.quote(script_path)}")
-
-    wipe_window = tk.Toplevel(root)
-    wipe_window.title("Secure Wipe Tool")
-    wipe_window.geometry("420x360")
-
-    drives = get_drives()
-    if not drives:
-        messagebox.showwarning("Secure Wipe", "No eligible storage devices were found.")
-        wipe_window.destroy()
-        return
-
-    frame = tk.Frame(wipe_window)
-    frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-    scrollbar = tk.Scrollbar(frame)
-    scrollbar.pack(side="right", fill="y")
-
-    drive_list = tk.Listbox(frame, selectmode="single", yscrollcommand=scrollbar.set)
-    for drive in drives:
-        drive_list.insert(tk.END, drive["display"])
-    drive_list.pack(fill="both", expand=True)
-
-    scrollbar.config(command=drive_list.yview)
-
-    def on_select(_event):
-        drive = get_selected_drive()
-        if drive:
-            selected_label.config(text=f"Selected: {drive['display']}")
-
-    drive_list.bind("<<ListboxSelect>>", on_select)
-
-    selected_label = tk.Label(wipe_window, text="No drive selected")
-    selected_label.pack(pady=5)
-
-    tk.Label(
-        wipe_window,
-        text="WARNING: This operation permanently erases the selected drive.",
-        fg="red",
-    ).pack(pady=10)
-
-    tk.Button(wipe_window, text="Refresh Drive List", command=refresh_drives).pack(pady=5)
-    tk.Button(wipe_window, text="Wipe Drive", command=on_wipe, bg="red", fg="white").pack(pady=10)
-
-# --- GUI SETUP ---
-root = tk.Tk()
-root.title("Tech Toolbox")
-root.geometry("700x850")
-root.config(bg="#2e3b4e")
-
-# --- SYSTEM MONITOR ---
-fan_speed_label = tk.Label(root, text="Fan Speed: Loading...", bg="#2e3b4e", fg="white", font=("Arial", 14))
-fan_speed_label.pack(pady=10)
-
-cpu_label = tk.Label(root, text="CPU Usage:", bg="#2e3b4e", fg="white", font=("Arial", 12))
-cpu_label.pack()
-memory_label = tk.Label(root, text="Memory:", bg="#2e3b4e", fg="white", font=("Arial", 12))
-memory_label.pack()
-swap_label = tk.Label(root, text="Swap:", bg="#2e3b4e", fg="white", font=("Arial", 12))
-swap_label.pack()
-temp_label = tk.Label(root, text="CPU Temp:", bg="#2e3b4e", fg="white", font=("Arial", 12))
-temp_label.pack()
-disk_label = tk.Label(root, text="Disk Usage:", bg="#2e3b4e", fg="white", font=("Arial", 12))
-disk_label.pack()
-uptime_label = tk.Label(root, text="Uptime:", bg="#2e3b4e", fg="white", font=("Arial", 12))
-uptime_label.pack()
-internal_ip_label = tk.Label(root, text="Internal IP:", bg="#2e3b4e", fg="white", font=("Arial", 12))
-internal_ip_label.pack()
-external_ip_label = tk.Label(root, text="External IP:", bg="#2e3b4e", fg="white", font=("Arial", 12))
-external_ip_label.pack()
-
-# --- TOOL BUTTONS ---
-tk.Label(root, text="Tools", font=("Arial", 14, "bold"), fg="white", bg="#2e3b4e").pack(pady=10)
-button_frame = tk.Frame(root, bg="#2e3b4e")
-button_frame.pack()
-
-tool_commands = {
-    "GParted": program_launcher("gparted"),
-    "GNOME Disks": program_launcher("gnome-disks"),
-    "GNU ddrescue": launch_ddrescue_gui,
-    "Secure Wipe": secure_wipe,
-    "PhotoRec": terminal_launcher("sudo photorec"),
-    "Clonezilla": terminal_launcher("sudo clonezilla"),
-    "ADB Devices": terminal_launcher("adb devices"),
-    "Scrcpy (Screen Mirror)": program_launcher("scrcpy"),
-    "Wireshark": program_launcher("wireshark"),
-    "FileZilla": program_launcher("filezilla"),
-    "BleachBit": program_launcher("bleachbit"),
-    "Stacer": program_launcher("stacer"),
-    "LibreOffice Writer": program_launcher("libreoffice --writer"),
-    "CherryTree Notes": program_launcher("cherrytree"),
-    "KeePassXC": program_launcher("keepassxc"),
-    "Simple Scan": program_launcher("simple-scan"),
-    "Nmap": terminal_launcher("nmap"),
-    "SMART Monitoring": smart_monitoring,
-}
-
-special_tools = {
-    "Benchmark Script": run_benchmark,
-    "Fan Speed": fan_speed,
-    "Speedtest": run_speedtest,
-    "Ping Test": ping_test,
-    "Restart Network": restart_network,
-    "Reboot": reboot,
-    "Shutdown": shutdown
-}
 
 DEPENDENCY_MAP = {
     "GParted": ["gparted"],
@@ -777,21 +221,618 @@ DEPENDENCY_MAP = {
     "Shutdown": ["systemctl"],
 }
 
-check_dependencies()
 
-# --- Create buttons for all tools ---
-row = 0
-col = 0
-for label, action in {**tool_commands, **special_tools}.items():
-    btn = tk.Button(button_frame, text=label, command=action, bg="#1c2833", fg="white", font=("Arial", 10), width=30)
-    btn.grid(row=row, column=col, padx=5, pady=3)
-    row += 1
-    if row >= 13:
-        row = 0
-        col += 1
+class TechToolbox(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
 
-tk.Button(root, text="Quit", command=root.quit, bg="#cc0000", fg="white", font=("Arial", 12)).pack(pady=10)
+        self.setWindowTitle("Tech Toolbox")
+        self.resize(700, 850)
 
-update_system_stats()
-root.mainloop()
+        self._setup_fonts()
 
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        self.fan_speed_label = QLabel("Fan Speed: Loading...")
+        self.fan_speed_label.setFont(self.large_font)
+        layout.addWidget(self.fan_speed_label)
+
+        self.cpu_label = QLabel("CPU Usage:")
+        self.memory_label = QLabel("Memory:")
+        self.swap_label = QLabel("Swap:")
+        self.temp_label = QLabel("CPU Temp:")
+        self.disk_label = QLabel("Disk Usage:")
+        self.uptime_label = QLabel("Uptime:")
+        self.internal_ip_label = QLabel("Internal IP:")
+        self.external_ip_label = QLabel("External IP:")
+
+        for label in (
+            self.cpu_label,
+            self.memory_label,
+            self.swap_label,
+            self.temp_label,
+            self.disk_label,
+            self.uptime_label,
+            self.internal_ip_label,
+            self.external_ip_label,
+        ):
+            label.setFont(self.standard_font)
+            layout.addWidget(label)
+
+        header = QLabel("Tools")
+        header.setFont(self.header_font)
+        layout.addWidget(header)
+
+        button_grid = QGridLayout()
+        button_grid.setHorizontalSpacing(10)
+        button_grid.setVerticalSpacing(6)
+        layout.addLayout(button_grid)
+
+        tool_commands = {
+            "GParted": lambda: self.run_program("gparted"),
+            "GNOME Disks": lambda: self.run_program("gnome-disks"),
+            "GNU ddrescue": self.launch_ddrescue_gui,
+            "Secure Wipe": self.secure_wipe,
+            "PhotoRec": self.terminal_launcher("sudo photorec"),
+            "Clonezilla": self.terminal_launcher("sudo clonezilla"),
+            "ADB Devices": self.terminal_launcher("adb devices"),
+            "Scrcpy (Screen Mirror)": lambda: self.run_program("scrcpy"),
+            "Wireshark": lambda: self.run_program("wireshark"),
+            "FileZilla": lambda: self.run_program("filezilla"),
+            "BleachBit": lambda: self.run_program("bleachbit"),
+            "Stacer": lambda: self.run_program("stacer"),
+            "LibreOffice Writer": lambda: self.run_program("libreoffice --writer"),
+            "CherryTree Notes": lambda: self.run_program("cherrytree"),
+            "KeePassXC": lambda: self.run_program("keepassxc"),
+            "Simple Scan": lambda: self.run_program("simple-scan"),
+            "Nmap": self.terminal_launcher("nmap"),
+            "SMART Monitoring": self.smart_monitoring,
+        }
+
+        special_tools = {
+            "Benchmark Script": self.run_benchmark,
+            "Fan Speed": self.fan_speed,
+            "Speedtest": self.run_speedtest,
+            "Ping Test": self.ping_test,
+            "Restart Network": self.restart_network,
+            "Reboot": self.reboot,
+            "Shutdown": self.shutdown,
+        }
+
+        all_tools = {**tool_commands, **special_tools}
+        max_rows = 13
+        for index, (label_text, action) in enumerate(all_tools.items()):
+            button = QPushButton(label_text)
+            button.setFont(self.button_font)
+            button.setMinimumWidth(220)
+            button.clicked.connect(action)
+            row = index % max_rows
+            col = index // max_rows
+            button_grid.addWidget(button, row, col)
+
+        quit_button = QPushButton("Quit")
+        quit_button.setObjectName("dangerButton")
+        quit_button.setFont(self.button_font)
+        quit_button.clicked.connect(QApplication.instance().quit)
+        layout.addWidget(quit_button, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.stats_timer = QTimer(self)
+        self.stats_timer.timeout.connect(self.update_system_stats)
+        self.stats_timer.start(1000)
+        self.update_system_stats()
+
+        self.check_dependencies()
+
+    def _setup_fonts(self) -> None:
+        base_font = QFont("Arial", 12)
+        self.standard_font = base_font
+
+        large_font = QFont("Arial", 14)
+        large_font.setBold(True)
+        self.large_font = large_font
+
+        header_font = QFont("Arial", 14)
+        header_font.setBold(True)
+        self.header_font = header_font
+
+        button_font = QFont("Arial", 10)
+        self.button_font = button_font
+
+    def show_error(self, title: str, message: str) -> None:
+        QMessageBox.critical(self, title, message)
+
+    def show_warning(self, title: str, message: str) -> None:
+        QMessageBox.warning(self, title, message)
+
+    def run_program(self, command: str) -> None:
+        try:
+            subprocess.Popen(shlex.split(command))
+        except FileNotFoundError:
+            self.show_error("Error", f"Command not found: {command.split()[0]}")
+        except Exception as exc:
+            self.show_error("Error", f"Failed to launch command: {exc}")
+
+    def run_terminal_task(self, command: str, hold_open: bool = True) -> None:
+        try:
+            open_terminal(command, hold_open=hold_open)
+        except FileNotFoundError as exc:
+            self.show_error("Terminal Error", str(exc))
+        except Exception as exc:
+            self.show_error("Terminal Error", f"Failed to open terminal: {exc}")
+
+    def terminal_launcher(self, command: str, hold_open: bool = True):
+        return lambda: self.run_terminal_task(command, hold_open=hold_open)
+
+    def ensure_commands_available(self, *commands: str) -> bool:
+        missing = [command for command in commands if not shutil.which(command)]
+        if missing:
+            self.show_error(
+                "Missing Tools",
+                "The following required command(s) were not found: " + ", ".join(missing),
+            )
+            return False
+        return True
+
+    def check_dependencies(self) -> None:
+        missing = []
+
+        for label, executables in DEPENDENCY_MAP.items():
+            unavailable = [exe for exe in executables if not shutil.which(exe)]
+            if unavailable:
+                missing.append(f"{label} ({', '.join(unavailable)})")
+
+        if missing:
+            self.show_warning(
+                "Missing Tools",
+                "Some tools are unavailable because their executables were not found:\n" + "\n".join(missing),
+            )
+
+    def update_system_stats(self) -> None:
+        cpu_usage = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        disk = psutil.disk_usage('/')
+
+        uptime_seconds = time.time() - psutil.boot_time()
+        uptime_str = time.strftime('%H:%M:%S', time.gmtime(uptime_seconds))
+
+        internal_ip = get_internal_ip()
+        external_ip = get_external_ip()
+
+        try:
+            temps = psutil.sensors_temperatures()
+        except (AttributeError, psutil.Error):
+            temps = {}
+
+        if temps:
+            coretemp = temps.get("coretemp") or next((values for name, values in temps.items() if values), None)
+            if coretemp:
+                self.temp_label.setText(f"CPU Temp: {coretemp[0].current:.1f}°C")
+            else:
+                self.temp_label.setText("CPU Temp: N/A")
+        else:
+            self.temp_label.setText("CPU Temp: Unavailable")
+
+        self.cpu_label.setText(f"CPU Usage: {cpu_usage}%")
+        self.memory_label.setText(f"Memory: {memory.percent}%")
+        self.swap_label.setText(f"Swap: {swap.percent}%")
+        self.disk_label.setText(
+            f"Disk: {disk.percent}% ({disk.used // (1024**3)}GB / {disk.total // (1024**3)}GB)"
+        )
+        self.uptime_label.setText(f"Uptime: {uptime_str}")
+        self.internal_ip_label.setText(f"Internal IP: {internal_ip}")
+        self.external_ip_label.setText(f"External IP: {external_ip}")
+
+        sensor_data = get_sensors_data()
+        fan_speeds = sensor_data.get("Fan_Speed", {})
+        if fan_speeds:
+            label, value = next(iter(fan_speeds.items()))
+            self.fan_speed_label.setText(f"{label}: {value}")
+        else:
+            self.fan_speed_label.setText("Fan Speed: N/A")
+
+    def run_benchmark(self) -> None:
+        script_path = os.path.join(APP_DIR, "benchmark.sh")
+        if not os.path.exists(script_path):
+            self.show_error("Benchmark", "benchmark.sh was not found in the application directory.")
+            return
+
+        self.run_terminal_task(f"bash {shlex.quote(script_path)}")
+
+    def set_fan_speed(self, speed_value: int, pwm_path: str) -> None:
+        try:
+            value = int(speed_value)
+        except (TypeError, ValueError):
+            self.show_error("Fan Speed", "Invalid speed value provided.")
+            return
+
+        value = max(0, min(255, value))
+        command = f"echo {value} | sudo tee {shlex.quote(pwm_path)}"
+        self.run_terminal_task(command)
+
+    def fan_speed(self) -> None:
+        pwm_paths = detect_pwm_paths()
+        if not pwm_paths:
+            self.show_warning(
+                "Fan Speed",
+                "No writable PWM devices were detected. Ensure fan control is supported on this system.",
+            )
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Fan Speed Control")
+        dialog_layout = QVBoxLayout(dialog)
+
+        title_label = QLabel("Adjust Fan Speed:")
+        title_label.setFont(self.large_font)
+        dialog_layout.addWidget(title_label)
+
+        speed_slider = QSlider(Qt.Orientation.Horizontal)
+        speed_slider.setRange(0, 255)
+        speed_slider.setValue(128)
+        dialog_layout.addWidget(speed_slider)
+
+        pwm_label = QLabel("PWM Device:")
+        pwm_label.setFont(self.standard_font)
+        dialog_layout.addWidget(pwm_label)
+
+        pwm_dropdown = QComboBox()
+        pwm_dropdown.addItems(pwm_paths)
+        dialog_layout.addWidget(pwm_dropdown)
+
+        info_label = QLabel(
+            "A terminal will open and prompt for sudo privileges when applying the new speed."
+        )
+        info_label.setWordWrap(True)
+        dialog_layout.addWidget(info_label)
+
+        button = QPushButton("Set Fan Speed")
+        button.clicked.connect(lambda: self.set_fan_speed(speed_slider.value(), pwm_dropdown.currentText()))
+        dialog_layout.addWidget(button)
+
+        dialog.exec()
+
+    def launch_ddrescue_gui(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("GNU ddrescue")
+        layout = QVBoxLayout(dialog)
+
+        layout.addWidget(QLabel("Source device (e.g., /dev/sdb):"))
+        src_entry = QLineEdit()
+        layout.addWidget(src_entry)
+
+        layout.addWidget(QLabel("Destination image (e.g., /path/recovery.img):"))
+        dest_entry = QLineEdit()
+        layout.addWidget(dest_entry)
+
+        layout.addWidget(QLabel("Log file (e.g., /path/recovery.log):"))
+        log_entry = QLineEdit()
+        layout.addWidget(log_entry)
+
+        def run_ddrescue_command() -> None:
+            src = src_entry.text().strip()
+            dest = dest_entry.text().strip()
+            log = log_entry.text().strip()
+
+            if not (src and dest and log):
+                self.show_warning("GNU ddrescue", "Please fill in source, destination, and log file paths.")
+                return
+
+            dest_path = Path(dest)
+            try:
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                dest_path.touch(exist_ok=True)
+            except Exception as exc:
+                self.show_error("GNU ddrescue", f"Failed to prepare destination file: {exc}")
+                return
+
+            command = " ".join(
+                [
+                    "sudo",
+                    "ddrescue",
+                    shlex.quote(src),
+                    shlex.quote(dest),
+                    shlex.quote(log),
+                ]
+            )
+
+            self.run_terminal_task(command)
+            dialog.accept()
+
+        start_button = QPushButton("Start")
+        start_button.clicked.connect(run_ddrescue_command)
+        layout.addWidget(start_button)
+
+        dialog.exec()
+
+    def smart_monitoring(self) -> None:
+        if not self.ensure_commands_available("smartctl", "sudo"):
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("SMART Monitoring")
+        layout = QVBoxLayout(dialog)
+
+        layout.addWidget(QLabel("Select a drive to inspect with smartctl -a."))
+
+        device_map: dict[str, str] = {}
+        device_dropdown = QComboBox()
+        layout.addWidget(device_dropdown)
+
+        def refresh_devices() -> None:
+            device_map.clear()
+            devices = list_physical_disks()
+            for item in devices:
+                device_map[item["display"]] = item["path"]
+
+            options = list(device_map.keys())
+            device_dropdown.clear()
+            if options:
+                device_dropdown.addItems(options)
+                device_dropdown.setEnabled(True)
+            else:
+                device_dropdown.setEnabled(False)
+
+        refresh_button = QPushButton("Refresh")
+        refresh_button.clicked.connect(refresh_devices)
+        layout.addWidget(refresh_button)
+
+        layout.addWidget(QLabel("Or enter a device path manually (e.g., /dev/nvme0n1):"))
+        manual_entry = QLineEdit()
+        layout.addWidget(manual_entry)
+
+        def run_smartctl() -> None:
+            manual_value = manual_entry.text().strip()
+            if manual_value:
+                target = manual_value
+            else:
+                target = device_map.get(device_dropdown.currentText(), "").strip()
+
+            if not target:
+                self.show_warning(
+                    "SMART Monitoring",
+                    "Select a detected device or enter a device path to inspect.",
+                )
+                return
+
+            dialog.accept()
+            self.run_terminal_task(f"sudo smartctl -a {shlex.quote(target)}")
+
+        run_button = QPushButton("Run smartctl")
+        run_button.clicked.connect(run_smartctl)
+        layout.addWidget(run_button)
+
+        refresh_devices()
+        dialog.exec()
+
+    def run_speedtest(self) -> None:
+        self.run_terminal_task("speedtest-cli")
+
+    def ping_test(self) -> None:
+        self.run_terminal_task("ping -c 4 8.8.8.8")
+
+    def reboot(self) -> None:
+        if not self.ensure_commands_available("systemctl"):
+            return
+        response = QMessageBox.question(self, "Reboot", "Are you sure you want to reboot?")
+        if response == QMessageBox.StandardButton.Yes:
+            try:
+                subprocess.Popen(["systemctl", "reboot"])
+            except Exception as exc:
+                self.show_error("Reboot", f"Failed to initiate reboot: {exc}")
+
+    def shutdown(self) -> None:
+        if not self.ensure_commands_available("systemctl"):
+            return
+        response = QMessageBox.question(self, "Shutdown", "Are you sure you want to shut down?")
+        if response == QMessageBox.StandardButton.Yes:
+            try:
+                subprocess.Popen(["systemctl", "poweroff"])
+            except Exception as exc:
+                self.show_error("Shutdown", f"Failed to initiate shutdown: {exc}")
+
+    def restart_network(self) -> None:
+        if not self.ensure_commands_available("systemctl", "sudo"):
+            return
+        self.run_terminal_task("sudo systemctl restart NetworkManager")
+
+    def secure_wipe(self) -> None:
+        if not self.ensure_commands_available("lsblk", "shred", "badblocks", "pkexec"):
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Secure Wipe Tool")
+        dialog.resize(420, 360)
+        layout = QVBoxLayout(dialog)
+
+        drives: list[dict[str, str]] = []
+        drive_list = QListWidget()
+        layout.addWidget(drive_list)
+
+        selected_label = QLabel("No drive selected")
+        layout.addWidget(selected_label)
+
+        warning_label = QLabel(
+            "WARNING: This operation permanently erases the selected drive."
+        )
+        warning_label.setStyleSheet("color: #ff8080;")
+        layout.addWidget(warning_label)
+
+        button_row = QHBoxLayout()
+        refresh_button = QPushButton("Refresh Drive List")
+        wipe_button = QPushButton("Wipe Drive")
+        wipe_button.setStyleSheet("background-color: #b00000; color: white;")
+        button_row.addWidget(refresh_button)
+        button_row.addWidget(wipe_button)
+        layout.addLayout(button_row)
+
+        def get_drives() -> list[dict[str, str]]:
+            try:
+                output = subprocess.check_output(
+                    ["lsblk", "-d", "-o", "NAME,SIZE,TYPE,MOUNTPOINT"],
+                    text=True,
+                )
+            except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+                self.show_error("Secure Wipe", f"Failed to list block devices: {exc}")
+                return []
+
+            drives_found = []
+            for line in output.splitlines()[1:]:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+
+                name, size, dev_type = parts[:3]
+                if dev_type in {"rom", "loop", "part"}:
+                    continue
+
+                mountpoint = parts[3] if len(parts) >= 4 else ""
+                display = f"{name} ({size})"
+                if mountpoint and mountpoint != "-":
+                    display += f" – mounted at {mountpoint}"
+
+                drives_found.append({"path": f"/dev/{name}", "display": display})
+
+            return drives_found
+
+        def load_drives() -> None:
+            nonlocal drives
+            drives = get_drives()
+            drive_list.clear()
+            for drive in drives:
+                drive_list.addItem(drive["display"])
+            selected_label.setText("No drive selected")
+
+        def current_drive():
+            index = drive_list.currentRow()
+            if index < 0 or index >= len(drives):
+                return None
+            return drives[index]
+
+        def on_selection_changed() -> None:
+            drive = current_drive()
+            if drive:
+                selected_label.setText(f"Selected: {drive['display']}")
+            else:
+                selected_label.setText("No drive selected")
+
+        def create_wipe_script(device_path: str) -> str:
+            temp_dir = tempfile.mkdtemp(prefix="wipe_")
+            script_path = os.path.join(temp_dir, "wipe.sh")
+
+            script_content = f"""#!/bin/bash
+set -euo pipefail
+
+TEMP_DIR={shlex.quote(temp_dir)}
+trap 'rm -rf -- "$TEMP_DIR"' EXIT
+device={shlex.quote(device_path)}
+
+log_step() {{
+    echo ""
+    echo "==> $1"
+}}
+
+log_step "Pass 1: writing 0xFF pattern"
+shred -v -n 0 --force --pattern=ff "$device"
+
+log_step "Pass 2: writing zeros"
+shred -v -n 0 --force --zero "$device"
+
+log_step "Pass 3: writing random data"
+shred -v -n 1 --force "$device"
+
+log_step "Verification: read-only badblocks scan"
+badblocks -sv "$device"
+
+echo ""
+echo "Secure wipe completed for $device"
+"""
+
+            with open(script_path, "w", encoding="utf-8") as script_file:
+                script_file.write(script_content)
+
+            os.chmod(script_path, 0o755)
+            return script_path
+
+        def on_wipe() -> None:
+            drive = current_drive()
+            if not drive:
+                self.show_warning("Secure Wipe", "Please select a drive to wipe.")
+                return
+
+            confirm_message = (
+                f"Are you sure you want to wipe {drive['display']}?\n\n"
+                "This process will:\n"
+                "• Pass 1: write 0xFF pattern\n"
+                "• Pass 2: write zeros\n"
+                "• Pass 3: write random data\n"
+                "• Verify with a read-only badblocks scan\n\n"
+                "All data on the device will be permanently destroyed."
+            )
+
+            response = QMessageBox.question(
+                self,
+                "Confirm Secure Wipe",
+                confirm_message,
+            )
+            if response != QMessageBox.StandardButton.Yes:
+                return
+
+            script_path = create_wipe_script(drive["path"])
+            self.run_terminal_task(f"pkexec bash {shlex.quote(script_path)}")
+
+        drive_list.currentRowChanged.connect(lambda _: on_selection_changed())
+        refresh_button.clicked.connect(load_drives)
+        wipe_button.clicked.connect(on_wipe)
+
+        load_drives()
+        if not drives:
+            self.show_warning("Secure Wipe", "No eligible storage devices were found.")
+            dialog.reject()
+            return
+
+        dialog.exec()
+
+
+def main() -> None:
+    import sys
+
+    app = QApplication(sys.argv)
+    app.setStyleSheet(
+        """
+        QWidget {
+            background-color: #2e3b4e;
+            color: white;
+            font-family: Arial;
+        }
+        QLineEdit, QComboBox, QListWidget {
+            background-color: #1c2833;
+            color: white;
+            selection-background-color: #4CAF50;
+        }
+        QPushButton {
+            background-color: #1c2833;
+            color: white;
+            padding: 6px 12px;
+        }
+        QPushButton#dangerButton {
+            background-color: #cc0000;
+            color: white;
+        }
+        QPushButton:hover {
+            background-color: #32475b;
+        }
+        QLabel {
+            font-size: 12pt;
+        }
+        """
+    )
+    window = TechToolbox()
+    window.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
