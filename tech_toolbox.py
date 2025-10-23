@@ -332,12 +332,12 @@ class TechToolbox(QWidget):
 
         if tool_type == "program":
             command = tool.get("command")
-            if not command:
+            if not isinstance(command, str) or not command.strip():
                 raise ValueError("missing 'command' for program tool")
             action = lambda cmd=command: self.run_program(cmd)
         elif tool_type == "terminal":
             command = tool.get("command")
-            if not command:
+            if not isinstance(command, str) or not command.strip():
                 raise ValueError("missing 'command' for terminal tool")
             hold_open = bool(tool.get("hold_open", True))
             action = self.terminal_launcher(command, hold_open=hold_open)
