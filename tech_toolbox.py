@@ -1,5 +1,6 @@
 import glob
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -187,7 +188,7 @@ def get_sensors_data():
 
         label, value = parts
         if "fan" in label.lower() and "rpm" in value.lower():
-            speed_value = value.split("RPM")[0].strip()
+            speed_value = re.split(r"\brpm\b", value, flags=re.IGNORECASE)[0].strip()
             sensor_data["Fan_Speed"][label.strip()] = speed_value
 
     return sensor_data
