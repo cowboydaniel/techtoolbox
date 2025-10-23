@@ -327,3 +327,120 @@ def test_get_sensors_data_handles_error(monkeypatch):
     data = tech_toolbox.get_sensors_data()
 
     assert data == {"Fan_Speed": {}}
+
+
+def test_launch_ddrescue_gui_prepares_paths(monkeypatch):
+    toolbox = tech_toolbox.TechToolbox.__new__(tech_toolbox.TechToolbox)
+
+    recorded_errors: list[tuple[str, str]] = []
+    recorded_commands: list[str] = []
+
+    toolbox.show_warning = lambda *args, **kwargs: None
+
+    def fake_show_error(title: str, message: str) -> None:
+        recorded_errors.append((title, message))
+
+    toolbox.show_error = fake_show_error
+    toolbox.run_terminal_task = lambda command: recorded_commands.append(command)
+
+    dialog_instances = []
+
+    class RecordingDialog:
+        def __init__(self, *args, **kwargs):
+            self.accept_called = False
+            dialog_instances.append(self)
+
+        def setWindowTitle(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return None
+
+        def accept(self):
+            self.accept_called = True
+
+    monkeypatch.setattr(tech_toolbox, "QDialog", RecordingDialog)
+
+    line_edits = []
+
+    class RecordingLineEdit:
+        def __init__(self, *args, **kwargs):
+            self._text = ""
+            line_edits.append(self)
+
+        def text(self):
+            return self._text
+
+        def setText(self, value):
+            self._text = value
+
+    monkeypatch.setattr(tech_toolbox, "QLineEdit", RecordingLineEdit)
+
+    buttons = []
+
+    class RecordingButton:
+        def __init__(self, *args, **kwargs):
+            self._callback = None
+            self.clicked = types.SimpleNamespace(connect=self._connect)
+            buttons.append(self)
+
+        def _connect(self, callback):
+            self._callback = callback
+
+        def trigger(self):
+            if self._callback:
+                self._callback()
+
+    monkeypatch.setattr(tech_toolbox, "QPushButton", RecordingButton)
+
+    operations = []
+
+    class FakeParent:
+        def __init__(self, label: str):
+            self.label = label
+
+        def mkdir(self, parents: bool = False, exist_ok: bool = False):
+            operations.append(("mkdir", self.label, parents, exist_ok))
+
+    class FakePath:
+        def __init__(self, raw: str):
+            self.raw = raw
+
+        @property
+        def parent(self):
+            return FakeParent(f"parent({self.raw})")
+
+        def touch(self, exist_ok: bool = False):
+            operations.append(("touch", self.raw, exist_ok))
+
+    def fake_path_factory(value):
+        if isinstance(value, FakePath):
+            return value
+        return FakePath(str(value))
+
+    monkeypatch.setattr(tech_toolbox, "Path", fake_path_factory)
+
+    toolbox.launch_ddrescue_gui()
+
+    assert len(line_edits) == 3
+
+    src_entry, dest_entry, log_entry = line_edits
+    src_entry.setText("/dev/sdb")
+    dest_entry.setText("/tmp/recovery.img")
+    log_entry.setText("/tmp/recovery.log")
+
+    buttons[-1].trigger()
+
+    assert operations == [
+        ("mkdir", "parent(/tmp/recovery.img)", True, True),
+        ("touch", "/tmp/recovery.img", True),
+        ("mkdir", "parent(/tmp/recovery.log)", True, True),
+        ("touch", "/tmp/recovery.log", True),
+    ]
+
+    assert recorded_commands == [
+        "sudo ddrescue /dev/sdb /tmp/recovery.img /tmp/recovery.log"
+    ]
+
+    assert recorded_errors == []
+    assert dialog_instances[-1].accept_called
