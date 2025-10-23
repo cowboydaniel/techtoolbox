@@ -444,3 +444,39 @@ def test_launch_ddrescue_gui_prepares_paths(monkeypatch):
 
     assert recorded_errors == []
     assert dialog_instances[-1].accept_called
+
+
+def test_secure_wipe_displays_mount_points_with_spaces(monkeypatch):
+    sample_output = """NAME   SIZE TYPE MOUNTPOINT
+sda    931G disk /mnt/data
+sdb    476G disk /media/My Drive
+""".strip()
+
+    monkeypatch.setattr(
+        tech_toolbox.subprocess,
+        "check_output",
+        lambda *args, **kwargs: sample_output,
+    )
+
+    toolbox = tech_toolbox.TechToolbox.__new__(tech_toolbox.TechToolbox)
+    toolbox._get_tool_dependencies = lambda *args, **kwargs: []
+    toolbox.ensure_commands_available = lambda *args, **kwargs: True
+    toolbox.show_error = lambda *args, **kwargs: None
+    toolbox.show_warning = lambda *args, **kwargs: None
+    toolbox.run_terminal_task = lambda *args, **kwargs: None
+
+    created_lists = []
+
+    class RecordingListWidget(DummyListWidget):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created_lists.append(self)
+
+    monkeypatch.setattr(tech_toolbox, "QListWidget", RecordingListWidget)
+
+    toolbox.secure_wipe()
+
+    assert created_lists, "Drive list widget was not created"
+    assert (
+        "sdb (476G) – mounted at /media/My Drive" in created_lists[0]._items
+    )
