@@ -17,6 +17,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QGridLayout,
@@ -650,6 +651,125 @@ class TechToolbox(QWidget):
         layout.addWidget(run_button)
 
         refresh_devices()
+        dialog.exec()
+
+    def nmap_scan(self) -> None:
+        dependencies = self._get_tool_dependencies("Nmap")
+        if dependencies and not self.ensure_commands_available(*dependencies):
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Nmap Scan")
+        dialog.resize(420, 360)
+
+        layout = QVBoxLayout(dialog)
+
+        intro_label = QLabel(
+            "Enter the target host or network and choose any scan options to include."
+        )
+        intro_label.setWordWrap(True)
+        layout.addWidget(intro_label)
+
+        target_input = QLineEdit()
+        target_input.setPlaceholderText("e.g. scanme.nmap.org or 192.168.1.0/24")
+        layout.addWidget(QLabel("Target:"))
+        layout.addWidget(target_input)
+
+        options_label = QLabel("Common options:")
+        options_label.setFont(self.standard_font)
+        layout.addWidget(options_label)
+
+        option_definitions: list[tuple[QCheckBox, list[str]]] = []
+        for text, args in (
+            ("TCP SYN scan (-sS)", ["-sS"]),
+            ("Service/version detection (-sV)", ["-sV"]),
+            ("OS detection (-O)", ["-O"]),
+            ("Default scripts (-sC)", ["-sC"]),
+            ("Top 100 ports (--top-ports 100)", ["--top-ports", "100"]),
+            ("Skip host discovery (-Pn)", ["-Pn"]),
+        ):
+            checkbox = QCheckBox(text)
+            layout.addWidget(checkbox)
+            option_definitions.append((checkbox, list(args)))
+
+        timing_layout = QHBoxLayout()
+        timing_label = QLabel("Timing profile:")
+        timing_layout.addWidget(timing_label)
+        timing_combo = QComboBox()
+        timing_combo.addItem("Default", "")
+        timing_combo.addItem("Polite (-T2)", "-T2")
+        timing_combo.addItem("Normal (-T3)", "-T3")
+        timing_combo.addItem("Aggressive (-T4)", "-T4")
+        timing_combo.addItem("Insane (-T5)", "-T5")
+        timing_layout.addWidget(timing_combo)
+        timing_layout.addStretch(1)
+        layout.addLayout(timing_layout)
+
+        layout.addWidget(QLabel("Extra options (advanced):"))
+        extra_options_input = QLineEdit()
+        extra_options_input.setPlaceholderText("Additional flags, e.g. -p 1-1000 --open")
+        layout.addWidget(extra_options_input)
+
+        button_row = QHBoxLayout()
+        run_button = QPushButton("Launch Scan")
+        cancel_button = QPushButton("Cancel")
+        button_row.addWidget(run_button)
+        button_row.addWidget(cancel_button)
+        layout.addLayout(button_row)
+
+        def launch_scan() -> None:
+            target_text = target_input.text().strip()
+            if not target_text:
+                self.show_error("Nmap Scan", "Enter the target host or network to scan.")
+                return
+
+            try:
+                target_parts = shlex.split(target_text)
+            except ValueError:
+                self.show_error(
+                    "Nmap Scan",
+                    "The target field contains invalid quoting. Please correct it.",
+                )
+                return
+
+            if not target_parts:
+                self.show_error("Nmap Scan", "Enter at least one target for the scan.")
+                return
+
+            option_parts: list[str] = []
+            for checkbox, args in option_definitions:
+                if checkbox.isChecked():
+                    option_parts.extend(args)
+
+            timing_value = timing_combo.currentData()
+            if timing_value:
+                option_parts.append(str(timing_value))
+
+            extra_text = extra_options_input.text().strip()
+            if extra_text:
+                try:
+                    option_parts.extend(shlex.split(extra_text))
+                except ValueError:
+                    self.show_error(
+                        "Nmap Scan",
+                        "Extra options contain invalid quoting. Please correct them.",
+                    )
+                    return
+
+            command_parts: list[str] = []
+            if shutil.which("sudo"):
+                command_parts.append("sudo")
+            command_parts.append("nmap")
+            command_parts.extend(option_parts)
+            command_parts.extend(target_parts)
+
+            command = " ".join(shlex.quote(part) for part in command_parts)
+            dialog.accept()
+            self.run_terminal_task(command)
+
+        run_button.clicked.connect(launch_scan)
+        cancel_button.clicked.connect(dialog.reject)
+
         dialog.exec()
 
     def run_speedtest(self) -> None:
