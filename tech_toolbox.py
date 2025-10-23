@@ -213,7 +213,7 @@ DEPENDENCY_MAP = {
     "Simple Scan": ["simple-scan"],
     "Nmap": ["nmap"],
     "SMART Monitoring": ["smartctl", "sudo"],
-    "Benchmark Script": ["bash"],
+    "Benchmark Script": ["bash", "mpstat", "stress", "dd"],
     "Fan Speed": ["tee", "sudo"],
     "Speedtest": ["speedtest-cli"],
     "Ping Test": ["ping"],
@@ -438,6 +438,10 @@ class TechToolbox(QWidget):
         script_path = os.path.join(APP_DIR, "benchmark.sh")
         if not os.path.exists(script_path):
             self.show_error("Benchmark", "benchmark.sh was not found in the application directory.")
+            return
+
+        dependencies = DEPENDENCY_MAP.get("Benchmark Script", [])
+        if dependencies and not self.ensure_commands_available(*dependencies):
             return
 
         self.run_terminal_task(f"bash {shlex.quote(script_path)}")
