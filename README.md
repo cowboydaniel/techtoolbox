@@ -1,6 +1,6 @@
 # TechToolbox
 
-TechToolbox is a Tkinter-based dashboard for Linux technicians. It combines real-time system monitoring with shortcuts to common recovery, networking, and maintenance tools.
+TechToolbox is a PyQt6-based dashboard for Linux technicians. It combines real-time system monitoring with shortcuts to common recovery, networking, and maintenance tools.
 
 ## Features
 
@@ -30,6 +30,8 @@ python3 tech_toolbox.py
 ```
 
 Grant the application permission to run privileged commands when prompted (several utilities launch through `sudo` or `pkexec`).
+
+The project previously included `linux/` and `windows/` wrappers that re-imported the top-level script; these are no longer required—`tech_toolbox.py` is the single entry point across platforms.
 
 ## Notes
 
